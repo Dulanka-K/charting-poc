@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Chart Web Worker PoC</title>
+    <style>
+        body { margin: 0; background-color: #121212; color: #fff; font-family: sans-serif; overflow: hidden; }
+        #app-container { position: relative; width: 100vw; height: 100vh; }
+        
+        /* The Single WebGL Canvas */
+        #chartCanvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+            cursor: grab;
+            touch-action: none;
+            user-select: none;
+        }
+
+        /* The transparent overlay UI grid */
+        #ui-grid {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            display: grid;
+            z-index: 10;
+            pointer-events: none; /* Let clicks pass through for now, or catch them here in a real app */
+        }
+        .ui-box {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            position: relative;
+        }
+        .ui-label {
+            position: absolute;
+            top: 5px; left: 5px;
+            background: rgba(0,0,0,0.5);
+            padding: 2px 5px;
+            font-size: 12px;
+        }
+
+        #metrics {
+            position: absolute;
+            top: 10px; right: 10px;
+            background: rgba(0,0,0,0.8);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        .chart-cell-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            cursor: grab;
+            touch-action: none;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        <!-- Single Global Canvas (Only used in single-pixi mode) -->
+        <canvas id="chartCanvas"></canvas>
+        
+        <!-- 16 Framework Wrappers (Or separate canvas containers) -->
+        <div id="ui-grid">
+            <!-- Populated by main.js -->
+        </div>
+
+        <!-- Performance Metrics & Mode Switcher -->
+        <div id="metrics">
+            <div style="margin-bottom: 12px; border-bottom: 1px solid #444; padding-bottom: 8px;">
+                <label style="font-size: 11px; color: #aaa; display: block; margin-bottom: 4px;">TEST ARCHITECTURE:</label>
+                <select id="mode-select" style="background: #222; color: #fff; border: 1px solid #555; padding: 4px; font-size: 12px; border-radius: 4px; width: 100%; cursor: pointer;">
+                    <option value="single-pixi">1 Canvas: PixiJS WebGL (Single Context)</option>
+                    <option value="multi-webgl">16 Canvases: PixiJS WebGL (Context Limit Test)</option>
+                    <option value="multi-2d">16 Canvases: Native Canvas2D (TradingView Style)</option>
+                </select>
+            </div>
+            <div class="metric" id="fps-main">Main Thread FPS: --</div>
+            <div class="metric" id="fps-worker">Render Draws: -- (On-Demand)</div>
+            <div class="metric" id="time-render" style="color: #64b5f6;">Render Draw Time: -- ms</div>
+            <div class="metric" id="time-data" style="color: #ffb74d;">Math/Data Time: -- ms</div>
+            <div class="metric" id="ipc-mode" style="color: #4dd0e1;">IPC Stream: Snapshot + Delta (480 B / tick)</div>
+
+            <!-- Bar Count Allocation HUD Block -->
+            <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #333; font-size: 11px; line-height: 1.55;">
+                <div style="color: #aaa; font-weight: bold; margin-bottom: 3px; letter-spacing: 0.5px;">BAR ALLOCATION:</div>
+                <div style="color: #ddd;">• Raw Base Store: <span id="bar-raw" style="color: #4fc3f7; font-weight: bold;">30,000</span> / symbol (<span id="bar-raw-total" style="color: #888;">120,000</span> total)</div>
+                <div style="color: #ddd;">• Aggregated Store: <span id="bar-agg" style="color: #81c784; font-weight: bold;">500</span> / chart (<span id="bar-agg-total" style="color: #888;">8,000</span> total)</div>
+                <div style="color: #ddd;">• Viewport Rendered: <span id="bar-vis" style="color: #ffb74d; font-weight: bold;">150</span> / chart (<span id="bar-vis-total" style="color: #888;">2,400</span> total)</div>
+                <div id="drag-offset-info" style="color: #ce93d8; margin-top: 2px;">• Drag Horizon: <span style="color: #fff;">350 bars buffer</span> (Live edge)</div>
+            </div>
+
+            <div style="font-size: 10px; color: #777; margin-top: 8px;">On-Demand VSync Scheduler • 10 ticks/sec<br>Zero-Copy Float32Array (30 floats/candle)</div>
+        </div>
+    </div>
+
+    <script src="main.js?v=23"></script>
+</body>
+</html>
