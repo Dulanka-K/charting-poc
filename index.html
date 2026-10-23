@@ -74,10 +74,14 @@
             <div style="margin-bottom: 12px; border-bottom: 1px solid #444; padding-bottom: 8px;">
                 <label style="font-size: 11px; color: #aaa; display: block; margin-bottom: 4px;">TEST ARCHITECTURE:</label>
                 <select id="mode-select" style="background: #222; color: #fff; border: 1px solid #555; padding: 4px; font-size: 12px; border-radius: 4px; width: 100%; cursor: pointer;">
-                    <option value="single-pixi">1 Canvas: PixiJS WebGL (Single Context)</option>
+                    <option value="multi-2d">16 Canvases: Native Canvas2D (Offscreen Worker)</option>
+                    <option value="main-2d">16 Canvases: Native Canvas2D (Main Thread)</option>
+                    <option value="single-pixi">1 Canvas: PixiJS WebGL (Single Context Worker)</option>
                     <option value="multi-webgl">16 Canvases: PixiJS WebGL (Context Limit Test)</option>
-                    <option value="multi-2d">16 Canvases: Native Canvas2D (TradingView Style)</option>
                 </select>
+                <button id="freeze-btn" style="margin-top: 6px; width: 100%; background: #b71c1c; color: #fff; border: 1px solid #ef5350; padding: 5px 8px; font-size: 11px; font-weight: bold; border-radius: 4px; cursor: pointer;">
+                    ⚡ Simulate 2s Main-Thread UI Freeze
+                </button>
             </div>
             <div class="metric" id="fps-main">Main Thread FPS: --</div>
             <div class="metric" id="fps-worker">Render Draws: -- (On-Demand)</div>
@@ -89,7 +93,7 @@
             <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #333; font-size: 11px; line-height: 1.55;">
                 <div style="color: #aaa; font-weight: bold; margin-bottom: 3px; letter-spacing: 0.5px;">BAR ALLOCATION:</div>
                 <div style="color: #ddd;">• Raw Base Store: <span id="bar-raw" style="color: #4fc3f7; font-weight: bold;">30,000</span> / symbol (<span id="bar-raw-total" style="color: #888;">120,000</span> total)</div>
-                <div style="color: #ddd;">• Aggregated Store: <span id="bar-agg" style="color: #81c784; font-weight: bold;">500</span> / chart (<span id="bar-agg-total" style="color: #888;">8,000</span> total)</div>
+                <div style="color: #ddd;">• Aggregated Store: <span id="bar-agg" style="color: #81c784; font-weight: bold;">150</span> / chart (<span id="bar-agg-total" style="color: #888;">2,400</span> total)</div>
                 <div style="color: #ddd;">• Viewport Rendered: <span id="bar-vis" style="color: #ffb74d; font-weight: bold;">150</span> / chart (<span id="bar-vis-total" style="color: #888;">2,400</span> total)</div>
                 <div id="drag-offset-info" style="color: #ce93d8; margin-top: 2px;">• Drag Horizon: <span style="color: #fff;">350 bars buffer</span> (Live edge)</div>
             </div>
@@ -98,6 +102,6 @@
         </div>
     </div>
 
-    <script src="main.js?v=23"></script>
+    <script src="main.js?v=27"></script>
 </body>
 </html>

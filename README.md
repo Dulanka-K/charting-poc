@@ -13,10 +13,11 @@ A high-performance financial charting Proof of Concept (PoC) rendering **16 simu
 
 ## Rendering Modes Included
 
-Switch between three architecture benchmarks directly from the HUD dropdown:
-1. **16x Canvas 2D (`render.multi-2d.worker.js`)** — *Recommended*: 16 independent `OffscreenCanvas` 2D contexts with path batching and unlimited scalability.
-2. **Single Canvas WebGL (`render.worker.js`)**: Single fullscreen PixiJS WebGL context partitioned into 16 chart viewports.
-3. **16x WebGL (`render.multi-webgl.worker.js`)**: 16 separate PixiJS WebGL contexts (demonstrates browser 16-context hardware limits).
+Switch between four architecture benchmarks directly from the HUD dropdown:
+1. **16x Canvas 2D — Offscreen Worker (`render.multi-2d.worker.js`)** — *Recommended*: 16 independent `OffscreenCanvas` 2D contexts isolated in a worker thread (immune to Main-Thread UI freezes).
+2. **16x Canvas 2D — Main Thread (`main.js`)**: Renders the exact same 16 Canvas 2D contexts directly on the Main Thread (no Render Worker) to compare Main-Thread UI contention vs. `OffscreenCanvas` isolation using the built-in **"⚡ Simulate 2s Main-Thread UI Freeze"** button.
+3. **Single Canvas WebGL (`render.worker.js`)**: Single fullscreen PixiJS WebGL context partitioned into 16 chart viewports.
+4. **16x WebGL (`render.multi-webgl.worker.js`)**: 16 separate PixiJS WebGL contexts (demonstrates browser 16-context hardware limits).
 
 ## Running Locally
 
