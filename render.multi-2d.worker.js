@@ -7,7 +7,7 @@ let cellWidth = 0;
 let cellHeight = 0;
 let dataPort = null;
 
-const VISIBLE_CANDLES = 150;
+const VISIBLE_CANDLES = 500;
 const FLOATS_PER_CANDLE = 30;
 
 let rightOffsets = new Float32Array(16).fill(0);
@@ -79,7 +79,7 @@ onmessage = (e) => {
         dataPort.onmessage = (msg) => {
             if (msg.data.type === 'SNAPSHOT') {
                 const { ohlcv, sma, rsi, candlesPerChart, floatsPerCandle } = msg.data;
-                const baseCount = candlesPerChart || 500;
+                const baseCount = candlesPerChart || 1000;
                 chartStores = [];
                 for (let i = 0; i < NUM_CHARTS; i++) {
                     const ohlcvSlice = new Float32Array(baseCount * FLOATS_PER_CANDLE);
@@ -98,7 +98,7 @@ onmessage = (e) => {
                         count: baseCount,
                         isLoadingOlder: false,
                         hasMore: true,
-                        totalAvailable: 30000
+                        totalAvailable: 90000
                     };
                 }
                 dirtyFlags.fill(1);
@@ -228,7 +228,7 @@ onmessage = (e) => {
                 const endBar = store.count - Math.round(clamped);
                 const startBar = endBar - VISIBLE_CANDLES;
 
-                if (startBar < 80 && !store.isLoadingOlder && store.hasMore && dataPort) {
+                if (startBar < 150 && !store.isLoadingOlder && store.hasMore && dataPort) {
                     store.isLoadingOlder = true;
                     dataPort.postMessage({
                         type: 'FETCH_OLDER_BARS',
@@ -245,7 +245,7 @@ onmessage = (e) => {
                     maxOffset: maxOffset,
                     visibleCandles: VISIBLE_CANDLES,
                     totalCandles: store.count,
-                    totalAvailable: store.totalAvailable || 30000,
+                    totalAvailable: store.totalAvailable || 90000,
                     isDragging: true
                 });
             }
@@ -262,8 +262,8 @@ onmessage = (e) => {
                     offset: Math.round(clamped),
                     maxOffset: maxOffset,
                     visibleCandles: VISIBLE_CANDLES,
-                    totalCandles: store ? store.count : 500,
-                    totalAvailable: store ? store.totalAvailable : 30000,
+                    totalCandles: store ? store.count : 1000,
+                    totalAvailable: store ? store.totalAvailable : 90000,
                     isDragging: false
                 });
             }
@@ -291,8 +291,8 @@ onmessage = (e) => {
 
 function releaseChartMemory(idx) {
     const store = chartStores[idx];
-    if (!store || store.count <= 500) return;
-    const retainCount = 500;
+    if (!store || store.count <= 1000) return;
+    const retainCount = 1000;
     const dropCount = store.count - retainCount;
 
     // Release older historical bars back to 500 baseline

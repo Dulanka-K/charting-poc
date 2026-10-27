@@ -2,7 +2,7 @@
 
 const NUM_CHARTS = 16;
 const GRID_SIZE = Math.ceil(Math.sqrt(NUM_CHARTS));
-const VISIBLE_CANDLES = 150;
+const VISIBLE_CANDLES = 500;
 const FLOATS_PER_CANDLE = 30;
 
 // 1. Get Mode from URL Query Parameters
@@ -69,7 +69,7 @@ const CHART_CONFIGS = [
 ];
 
 // Track loaded bars per chart for live HUD calculation
-const chartLoadedCounts = new Uint32Array(NUM_CHARTS).fill(500);
+const chartLoadedCounts = new Uint32Array(NUM_CHARTS).fill(1000);
 
 // 5. Create MessageChannel between Data Worker and Renderer (Worker or Main Thread)
 const channel = new MessageChannel();
@@ -117,14 +117,14 @@ function handleRenderTelemetry(data) {
         if (elAggTotal) elAggTotal.innerText = `${totalAggregatedInRam.toLocaleString()} in RAM`;
 
         if (dragOffsetEl) {
-            const availText = totalAvailable ? totalAvailable.toLocaleString() : '30,000';
+            const availText = totalAvailable ? totalAvailable.toLocaleString() : '90,000';
             if (offset === 0) {
-                const memHint = totalCandles > 500 ? ` <button style="background: #2a2e39; color: #ffb74d; border: 1px solid #4b5563; border-radius: 3px; padding: 1px 6px; cursor: pointer; font-size: 10px; margin-left: 4px;" onclick="window.releaseMemory(${chartIdx})">Release (${totalCandles}B → 500B)</button>` : '';
+                const memHint = totalCandles > 1000 ? ` <button style="background: #2a2e39; color: #ffb74d; border: 1px solid #4b5563; border-radius: 3px; padding: 1px 6px; cursor: pointer; font-size: 10px; margin-left: 4px;" onclick="window.releaseMemory(${chartIdx})">Release (${totalCandles}B → 1000B)</button>` : '';
                 dragOffsetEl.innerHTML = `• Drag: <b style="color: #fff;">${label}</b> [Live edge] (${totalCandles.toLocaleString()} bars in RAM / ${availText} in store)${memHint}`;
             } else {
                 const statusColor = isDragging ? '#e040fb' : '#ce93d8';
                 const pageBadge = justPaged ? ` <span style="background: #2e7d32; color: #fff; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: bold;">+500 Paged!</span>` : '';
-                const releaseBtn = totalCandles > 500 ? ` <button style="background: #2a2e39; color: #ffb74d; border: 1px solid #4b5563; border-radius: 3px; padding: 1px 6px; cursor: pointer; font-size: 10px; margin-left: 4px;" title="Double-click chart or click to release back to 500 bars" onclick="window.releaseMemory(${chartIdx})">Release Memory</button>` : '';
+                const releaseBtn = totalCandles > 1000 ? ` <button style="background: #2a2e39; color: #ffb74d; border: 1px solid #4b5563; border-radius: 3px; padding: 1px 6px; cursor: pointer; font-size: 10px; margin-left: 4px;" title="Double-click chart or click to release back to 1000 bars" onclick="window.releaseMemory(${chartIdx})">Release Memory</button>` : '';
                 dragOffsetEl.innerHTML = `• Drag: <b style="color: #fff;">${label}</b> [Offset: <b style="color: ${statusColor};">${offset}</b> / ${maxOffset}] (Loaded: <b>${totalCandles.toLocaleString()}</b> / ${availText})${pageBadge}${releaseBtn}`;
             }
         }
@@ -334,7 +334,7 @@ function initMainThread2DRenderer(dataPort, canvases, contexts, initialW, initia
     dataPort.onmessage = (msg) => {
         if (msg.data.type === 'SNAPSHOT') {
             const { ohlcv, sma, rsi, candlesPerChart } = msg.data;
-            const baseCount = candlesPerChart || 500;
+            const baseCount = candlesPerChart || 1000;
             main2DState.chartStores = [];
             for (let i = 0; i < NUM_CHARTS; i++) {
                 const ohlcvSlice = new Float32Array(baseCount * FLOATS_PER_CANDLE);
@@ -353,7 +353,7 @@ function initMainThread2DRenderer(dataPort, canvases, contexts, initialW, initia
                     count: baseCount,
                     isLoadingOlder: false,
                     hasMore: true,
-                    totalAvailable: 30000
+                    totalAvailable: 90000
                 };
             }
             main2DState.dirtyFlags.fill(1);
@@ -488,7 +488,7 @@ function handleMain2DInput(data) {
 
                 const endBar = store.count - Math.round(clamped);
                 const startBar = endBar - VISIBLE_CANDLES;
-                if (startBar < 80 && store.hasMore && !store.isLoadingOlder) {
+                if (startBar < 150 && store.hasMore && !store.isLoadingOlder) {
                     store.isLoadingOlder = true;
                     main2DState.dataPort.postMessage({
                         type: 'FETCH_OLDER_BARS',
@@ -518,10 +518,10 @@ function handleMain2DInput(data) {
                     type: 'DRAG_STATUS',
                     chartIdx: idx,
                     offset: Math.round(main2DState.rightOffsets[idx]),
-                    maxOffset: store ? store.count - VISIBLE_CANDLES : 350,
+                    maxOffset: store ? store.count - VISIBLE_CANDLES : 500,
                     visibleCandles: VISIBLE_CANDLES,
-                    totalCandles: store ? store.count : 500,
-                    totalAvailable: store ? store.totalAvailable : 30000,
+                    totalCandles: store ? store.count : 1000,
+                    totalAvailable: store ? store.totalAvailable : 90000,
                     isDragging: false
                 });
             }
@@ -529,8 +529,8 @@ function handleMain2DInput(data) {
     } else if (data.type === 'RELEASE_MEMORY') {
         const idx = data.chartIdx;
         const store = main2DState.chartStores[idx];
-        if (!store || store.count <= 500) return;
-        const retainCount = 500;
+        if (!store || store.count <= 1000) return;
+        const retainCount = 1000;
         const dropCount = store.count - retainCount;
 
         store.ohlcv = store.ohlcv.slice(dropCount * FLOATS_PER_CANDLE);
@@ -739,8 +739,8 @@ dataWorker.onmessage = (e) => {
         if (elRawTotal) elRawTotal.innerText = `${(rawBarsPerSymbol * symbolsCount).toLocaleString()} total`;
         if (elAgg) elAgg.innerText = candlesPerChart.toLocaleString();
         if (elAggTotal) elAggTotal.innerText = `${(candlesPerChart * numCharts).toLocaleString()} in RAM`;
-        if (elVis) elVis.innerText = '150';
-        if (elVisTotal) elVisTotal.innerText = `${(150 * numCharts).toLocaleString()} total`;
+        if (elVis) elVis.innerText = '500';
+        if (elVisTotal) elVisTotal.innerText = `${(500 * numCharts).toLocaleString()} total`;
     }
 };
 

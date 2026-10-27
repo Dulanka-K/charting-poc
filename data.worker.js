@@ -2,7 +2,7 @@
 
 let renderPort;
 let NUM_CHARTS = 16;
-const CANDLES_PER_CHART = 500; // Each chart renders 500 aggregated bars of its interval
+const CANDLES_PER_CHART = 1000; // Each chart stores 1,000 aggregated bars (500 visible + 500 drag buffer)
 const FLOATS_PER_CANDLE = 30;
 
 // Field index offsets for flat strided buffer
@@ -25,7 +25,7 @@ const FIELD = {
 
 // 4 Underlying Symbols mapped across 4 Timeframes
 const SYMBOLS = ['AAPL', 'TSLA', 'NVDA', 'MSFT'];
-const RAW_BARS_PER_SYMBOL = 30000; // 30,000 raw 1-minute bars in raw base store
+const RAW_BARS_PER_SYMBOL = 90000; // 90,000 raw 1-minute bars in raw base store (supports 1,500+ 1h bars)
 
 // Chart Configurations:
 // Row 0: AAPL, TSLA, NVDA, MSFT on 1m (ratio 1)
