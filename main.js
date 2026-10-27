@@ -9,32 +9,13 @@ const FLOATS_PER_CANDLE = 30;
 const urlParams = new URLSearchParams(window.location.search);
 const currentMode = urlParams.get('mode') || 'multi-2d';
 
-// 2. Setup Mode Switcher Dropdown & Main-Thread Freeze Test Button
+// 2. Setup Mode Switcher Dropdown
 const modeSelect = document.getElementById('mode-select');
 modeSelect.value = currentMode;
 modeSelect.addEventListener('change', () => {
     urlParams.set('mode', modeSelect.value);
     window.location.search = urlParams.toString();
 });
-
-const freezeBtn = document.getElementById('freeze-btn');
-if (freezeBtn) {
-    freezeBtn.addEventListener('click', () => {
-        freezeBtn.innerText = '🥶 Main Thread Frozen (2s)...';
-        freezeBtn.style.background = '#ff6f00';
-        // Allow button text to paint on next frame, then block the Main Thread for 2000ms!
-        requestAnimationFrame(() => {
-            setTimeout(() => {
-                const start = performance.now();
-                while (performance.now() - start < 2000) {
-                    // Synchronous Main-Thread UI lock (simulates heavy Watchlist/DOM freeze)
-                }
-                freezeBtn.innerText = '⚡ Simulate 2s Main-Thread UI Freeze';
-                freezeBtn.style.background = '#b71c1c';
-            }, 16);
-        });
-    });
-}
 
 // 3. Setup Grid Layout
 const grid = document.getElementById('ui-grid');
