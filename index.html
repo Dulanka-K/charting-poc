@@ -85,6 +85,7 @@
             <div class="metric" id="time-render" style="color: #64b5f6;">Render Draw Time: -- ms</div>
             <div class="metric" id="time-data" style="color: #ffb74d;">Math/Data Time: -- ms</div>
             <div class="metric" id="ipc-mode" style="color: #4dd0e1;">IPC Stream: Snapshot + Delta (480 B / tick)</div>
+            <div class="metric" id="worker-mode" style="color: #ba68c8;">Data Worker: In-Memory Blob (Same-Origin)</div>
 
             <!-- Bar Count Allocation HUD Block -->
             <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #333; font-size: 11px; line-height: 1.55;">
@@ -95,10 +96,10 @@
                 <div id="drag-offset-info" style="color: #ce93d8; margin-top: 2px;">• Drag Horizon: <span style="color: #fff;">500 bars buffer</span> (Live edge)</div>
             </div>
 
-            <div style="font-size: 10px; color: #777; margin-top: 8px;">On-Demand VSync Scheduler • 10 ticks/sec<br>Zero-Copy Float32Array (30 floats/candle)</div>
+            <div style="font-size: 10px; color: #777; margin-top: 8px;">Blob Worker Packaging • On-Demand VSync • 10 ticks/sec<br>Zero-Copy Float32Array (30 floats/candle)</div>
         </div>
     </div>
 
-    <script src="main.js?v=27"></script>
+    <script type="module" src="main.js?v=28"></script>
 </body>
 </html>

@@ -1,4 +1,5 @@
 // main.js - Orchestrates Main Thread UI, DOM Canvases, and Worker Spawning
+import { dataWorkerEntry } from './data.worker.js';
 
 const NUM_CHARTS = 16;
 const GRID_SIZE = Math.ceil(Math.sqrt(NUM_CHARTS));
@@ -55,8 +56,19 @@ const chartLoadedCounts = new Uint32Array(NUM_CHARTS).fill(1000);
 // 5. Create MessageChannel between Data Worker and Renderer (Worker or Main Thread)
 const channel = new MessageChannel();
 
-// 6. Spawn Data Worker (Identical across all 4 modes!)
-const dataWorker = new Worker('data.worker.js?v=27');
+// 6. Spawn Data Worker via in-memory Blob URL (Zero 404s, zero CORS restrictions, Same-Origin)
+function createBlobWorker(workerFn, scriptName = 'data.worker.js') {
+    const workerSource = `(${workerFn.toString()})();\n//# sourceURL=${scriptName}`;
+    const blob = new Blob([workerSource], { type: 'application/javascript' });
+    const blobUrl = URL.createObjectURL(blob);
+    const worker = new Worker(blobUrl);
+    URL.revokeObjectURL(blobUrl); // Revoke immediately to release memory; active worker context is retained
+    return { worker, blobUrl };
+}
+
+const { worker: dataWorker, blobUrl: dataWorkerBlobUrl } = createBlobWorker(dataWorkerEntry, 'data.worker.js');
+console.log(`[Main Thread] Data Worker spawned via in-memory Blob URL (${dataWorkerBlobUrl})`);
+
 dataWorker.postMessage({
     type: 'INIT',
     port: channel.port1,
@@ -128,7 +140,7 @@ if (currentMode === 'single-pixi') {
     }
 
     const offscreen = globalCanvas.transferControlToOffscreen();
-    renderWorker = new Worker('render.worker.js?v=27', { type: 'module' });
+    renderWorker = new Worker('render.worker.js?v=28', { type: 'module' });
 
     renderWorker.postMessage({
         type: 'INIT',
@@ -223,8 +235,8 @@ if (currentMode === 'single-pixi') {
     }
 
     const workerFile = currentMode === 'multi-webgl'
-        ? 'render.multi-webgl.worker.js?v=27'
-        : 'render.multi-2d.worker.js?v=27';
+        ? 'render.multi-webgl.worker.js?v=28'
+        : 'render.multi-2d.worker.js?v=28';
 
     renderWorker = new Worker(workerFile, { type: 'module' });
 

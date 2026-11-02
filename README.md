@@ -5,7 +5,8 @@ A high-performance financial charting Proof of Concept (PoC) rendering **16 simu
 ## Key Architectural Highlights
 
 - **Contiguous TypedArray Memory (`Float32Array`):** Flat binary OHLCV and indicator storage with zero JavaScript object overhead and zero Garbage Collection (GC) pauses.
-- **Dedicated Data Worker (`data.worker.js`):** Offloads raw tick ingestion, multi-timeframe bar aggregation (`1m` -> `5m`, `15m`, `1h`), and technical indicators (`SMA`, `RSI`) from the Main Thread.
+- **Dedicated Data Worker (`data.worker.js`) via Blob Inlining:** Offloads raw tick ingestion, multi-timeframe bar aggregation (`1m` -> `5m`, `15m`, `1h`), and technical indicators (`SMA`, `RSI`) from the Main Thread. Spawns via `URL.createObjectURL(new Blob(...))` directly from memory, eliminating unbundled 404 errors and cross-origin CORS issues across bundlers.
+- **Full DevTools Debuggability:** Uses function serialization with `//# sourceURL=data.worker.js` so developers retain full IDE autocomplete, linting, and line-by-line DevTools breakpoints inside the inlined worker.
 - **OffscreenCanvas Render Workers:** Direct worker-to-worker data pipeline via `MessageChannel`, transmitting compact binary deltas (`120 bytes` per tick).
 - **On-Demand VSync Scheduler:** Event-driven `requestAnimationFrame` rendering with selective dirty-flag invalidation (`0%` background CPU when idle; `60 FPS` during interaction).
 - **Canvas 2D Path Batching:** Groups bullish and bearish candlesticks into 2 batched GPU draw passes (`~1ms` total render time).
