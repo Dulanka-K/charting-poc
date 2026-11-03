@@ -29,25 +29,25 @@ let main2DState = null;
 
 // 4. Chart Configurations (Symbols & Aggregated Timeframes)
 const CHART_CONFIGS = [
-    { symbol: 'AAPL', interval: '1m' },
-    { symbol: 'TSLA', interval: '1m' },
-    { symbol: 'NVDA', interval: '1m' },
-    { symbol: 'MSFT', interval: '1m' },
+    { symbol: 'AAPL', interval: '1m', ratio: 1 },
+    { symbol: 'TSLA', interval: '1m', ratio: 1 },
+    { symbol: 'NVDA', interval: '1m', ratio: 1 },
+    { symbol: 'MSFT', interval: '1m', ratio: 1 },
 
-    { symbol: 'AAPL', interval: '5m' },
-    { symbol: 'TSLA', interval: '5m' },
-    { symbol: 'NVDA', interval: '5m' },
-    { symbol: 'MSFT', interval: '5m' },
+    { symbol: 'AAPL', interval: '5m', ratio: 5 },
+    { symbol: 'TSLA', interval: '5m', ratio: 5 },
+    { symbol: 'NVDA', interval: '5m', ratio: 5 },
+    { symbol: 'MSFT', interval: '5m', ratio: 5 },
 
-    { symbol: 'AAPL', interval: '15m' },
-    { symbol: 'TSLA', interval: '15m' },
-    { symbol: 'NVDA', interval: '15m' },
-    { symbol: 'MSFT', interval: '15m' },
+    { symbol: 'AAPL', interval: '15m', ratio: 15 },
+    { symbol: 'TSLA', interval: '15m', ratio: 15 },
+    { symbol: 'NVDA', interval: '15m', ratio: 15 },
+    { symbol: 'MSFT', interval: '15m', ratio: 15 },
 
-    { symbol: 'AAPL', interval: '1h' },
-    { symbol: 'TSLA', interval: '1h' },
-    { symbol: 'NVDA', interval: '1h' },
-    { symbol: 'MSFT', interval: '1h' },
+    { symbol: 'AAPL', interval: '1h', ratio: 60 },
+    { symbol: 'TSLA', interval: '1h', ratio: 60 },
+    { symbol: 'NVDA', interval: '1h', ratio: 60 },
+    { symbol: 'MSFT', interval: '1h', ratio: 60 },
 ];
 
 // Track loaded bars per chart for live HUD calculation
@@ -107,18 +107,16 @@ function handleRenderTelemetry(data) {
         for (let c = 0; c < NUM_CHARTS; c++) totalAggregatedInRam += chartLoadedCounts[c];
 
         const elAggTotal = document.getElementById('bar-agg-total');
-        if (elAggTotal) elAggTotal.innerText = `${totalAggregatedInRam.toLocaleString()} in RAM`;
+        if (elAggTotal) elAggTotal.innerText = `${totalAggregatedInRam.toLocaleString()} in RAM (Capped)`;
 
         if (dragOffsetEl) {
             const availText = totalAvailable ? totalAvailable.toLocaleString() : '90,000';
             if (offset === 0) {
-                const memHint = totalCandles > 1000 ? ` <button style="background: #2a2e39; color: #ffb74d; border: 1px solid #4b5563; border-radius: 3px; padding: 1px 6px; cursor: pointer; font-size: 10px; margin-left: 4px;" onclick="window.releaseMemory(${chartIdx})">Release (${totalCandles}B → 1000B)</button>` : '';
-                dragOffsetEl.innerHTML = `• Drag: <b style="color: #fff;">${label}</b> [Live edge] (${totalCandles.toLocaleString()} bars in RAM / ${availText} in store)${memHint}`;
+                dragOffsetEl.innerHTML = `• Drag: <b style="color: #fff;">${label}</b> [Live edge] (RAM: <b style="color: #81c784;">1,000 bars CAPPED</b> / ${availText} in store • Zero Alloc)`;
             } else {
                 const statusColor = isDragging ? '#e040fb' : '#ce93d8';
-                const pageBadge = justPaged ? ` <span style="background: #2e7d32; color: #fff; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: bold;">+500 Paged!</span>` : '';
-                const releaseBtn = totalCandles > 1000 ? ` <button style="background: #2a2e39; color: #ffb74d; border: 1px solid #4b5563; border-radius: 3px; padding: 1px 6px; cursor: pointer; font-size: 10px; margin-left: 4px;" title="Double-click chart or click to release back to 1000 bars" onclick="window.releaseMemory(${chartIdx})">Release Memory</button>` : '';
-                dragOffsetEl.innerHTML = `• Drag: <b style="color: #fff;">${label}</b> [Offset: <b style="color: ${statusColor};">${offset}</b> / ${maxOffset}] (Loaded: <b>${totalCandles.toLocaleString()}</b> / ${availText})${pageBadge}${releaseBtn}`;
+                const snapBtn = ` <button style="background: #2a2e39; color: #ffb74d; border: 1px solid #4b5563; border-radius: 3px; padding: 1px 6px; cursor: pointer; font-size: 10px; margin-left: 4px;" title="Double-click chart or click to snap to live edge" onclick="window.resetToLive(${chartIdx})">Snap to Live</button>`;
+                dragOffsetEl.innerHTML = `• Drag: <b style="color: #fff;">${label}</b> [Offset: <b style="color: ${statusColor};">${offset}</b> / ${maxOffset}] (RAM: <b style="color: #81c784;">1,000 bars CAPPED</b> / ${availText})${snapBtn}`;
             }
         }
     }
@@ -339,14 +337,27 @@ function initMainThread2DRenderer(dataPort, canvases, contexts, initialW, initia
                 const rsiSlice = new Float32Array(baseCount);
                 rsiSlice.set(rsi.subarray(i * baseCount, (i + 1) * baseCount));
 
+                // Allocate spare buffers once for zero-allocation ping-pong recycling
+                const spareOhlcv = new Float32Array(baseCount * FLOATS_PER_CANDLE);
+                const spareSma = new Float32Array(baseCount);
+                const spareRsi = new Float32Array(baseCount);
+
+                const RATIOS = [1, 1, 1, 1, 5, 5, 5, 5, 15, 15, 15, 15, 60, 60, 60, 60];
+                const ratio = CHART_CONFIGS[i]?.ratio || RATIOS[i] || 1;
+                const totalAvail = Math.floor(90000 / ratio);
+
                 main2DState.chartStores[i] = {
                     ohlcv: ohlcvSlice,
                     sma: smaSlice,
                     rsi: rsiSlice,
+                    spareOhlcv,
+                    spareSma,
+                    spareRsi,
+                    sliceStart: totalAvail - baseCount,
+                    sliceEnd: totalAvail,
                     count: baseCount,
-                    isLoadingOlder: false,
-                    hasMore: true,
-                    totalAvailable: 90000
+                    totalAvailable: totalAvail,
+                    isFetchingSlice: false
                 };
             }
             main2DState.dirtyFlags.fill(1);
@@ -358,67 +369,60 @@ function initMainThread2DRenderer(dataPort, canvases, contexts, initialW, initia
                 const delta = deltas[d];
                 const store = main2DState.chartStores[delta.chartIdx];
                 if (!store) continue;
-                const count = store.count;
 
                 if (delta.isNewBar) {
-                    store.ohlcv.copyWithin(0, FLOATS_PER_CANDLE, count * FLOATS_PER_CANDLE);
-                    store.sma.copyWithin(0, 1, count);
-                    store.rsi.copyWithin(0, 1, count);
+                    store.totalAvailable++;
+                    if (store.sliceEnd >= store.totalAvailable - 1) {
+                        store.ohlcv.copyWithin(0, FLOATS_PER_CANDLE, store.count * FLOATS_PER_CANDLE);
+                        store.sma.copyWithin(0, 1, store.count);
+                        store.rsi.copyWithin(0, 1, store.count);
+                        store.sliceStart++;
+                        store.sliceEnd++;
+                    }
                 }
 
-                const baseOffset = (count - 1) * FLOATS_PER_CANDLE;
-                store.ohlcv.set(delta.candle, baseOffset);
-                store.sma[count - 1] = delta.sma;
-                store.rsi[count - 1] = delta.rsi;
-
-                main2DState.dirtyFlags[delta.chartIdx] = 1;
+                if (store.sliceEnd >= store.totalAvailable) {
+                    const baseOffset = (store.count - 1) * FLOATS_PER_CANDLE;
+                    store.ohlcv.set(delta.candle, baseOffset);
+                    store.sma[store.count - 1] = delta.sma;
+                    store.rsi[store.count - 1] = delta.rsi;
+                    main2DState.dirtyFlags[delta.chartIdx] = 1;
+                }
             }
             scheduleRedraw();
-        } else if (msg.data.type === 'OLDER_BARS_RESPONSE') {
-            const { chartIdx, count, ohlcv: olderOhlcv, sma: olderSma, rsi: olderRsi, hasMore, totalAvailable } = msg.data;
+        } else if (msg.data.type === 'WINDOW_SLICE_RESPONSE') {
+            const { chartIdx, sliceStart, sliceEnd, count, totalAvailable, ohlcv: newOhlcv, sma: newSma, rsi: newRsi } = msg.data;
             const store = main2DState.chartStores[chartIdx];
             if (!store) return;
 
-            store.isLoadingOlder = false;
-            store.hasMore = hasMore;
+            // Ping-Pong swap: old primary becomes the spare for the next transfer
+            store.spareOhlcv = store.ohlcv;
+            store.spareSma = store.sma;
+            store.spareRsi = store.rsi;
+
+            // Newly received slice becomes primary
+            store.ohlcv = newOhlcv;
+            store.sma = newSma;
+            store.rsi = newRsi;
+            store.sliceStart = sliceStart;
+            store.sliceEnd = sliceEnd;
+            store.count = count;
             store.totalAvailable = totalAvailable;
+            store.isFetchingSlice = false;
 
-            if (count > 0) {
-                const oldCount = store.count;
-                const newCount = oldCount + count;
+            main2DState.dirtyFlags[chartIdx] = 1;
+            scheduleRedraw();
 
-                const newOhlcv = new Float32Array(newCount * FLOATS_PER_CANDLE);
-                const newSma = new Float32Array(newCount);
-                const newRsi = new Float32Array(newCount);
-
-                newOhlcv.set(olderOhlcv, 0);
-                newSma.set(olderSma, 0);
-                newRsi.set(olderRsi, 0);
-
-                newOhlcv.set(store.ohlcv, count * FLOATS_PER_CANDLE);
-                newSma.set(store.sma, count);
-                newRsi.set(store.rsi, count);
-
-                store.ohlcv = newOhlcv;
-                store.sma = newSma;
-                store.rsi = newRsi;
-                store.count = newCount;
-
-                main2DState.dirtyFlags[chartIdx] = 1;
-                scheduleRedraw();
-
-                handleRenderTelemetry({
-                    type: 'DRAG_STATUS',
-                    chartIdx,
-                    offset: Math.round(main2DState.rightOffsets[chartIdx]),
-                    maxOffset: newCount - VISIBLE_CANDLES,
-                    visibleCandles: VISIBLE_CANDLES,
-                    totalCandles: newCount,
-                    totalAvailable,
-                    isDragging: (main2DState.activeDrag && main2DState.activeDrag.chartIdx === chartIdx),
-                    justPaged: true
-                });
-            }
+            handleRenderTelemetry({
+                type: 'DRAG_STATUS',
+                chartIdx,
+                offset: Math.round(main2DState.rightOffsets[chartIdx]),
+                maxOffset: totalAvailable - VISIBLE_CANDLES,
+                visibleCandles: VISIBLE_CANDLES,
+                totalCandles: count,
+                totalAvailable,
+                isDragging: (main2DState.activeDrag && main2DState.activeDrag.chartIdx === chartIdx)
+            });
         }
     };
 
@@ -472,23 +476,40 @@ function handleMain2DInput(data) {
                 const deltaX = x - main2DState.activeDrag.startX;
                 const slotWidth = main2DState.cellWidth / VISIBLE_CANDLES;
                 const newOffset = main2DState.activeDrag.startOffset + (deltaX / slotWidth);
-                const maxOffset = store.count - VISIBLE_CANDLES;
-                const clamped = Math.max(0, Math.min(maxOffset, newOffset));
+                const maxOffset = (store.totalAvailable || 1000) - VISIBLE_CANDLES;
+                const clamped = Math.max(0, Math.min(maxOffset, Number.isFinite(newOffset) ? newOffset : 0));
                 main2DState.rightOffsets[idx] = clamped;
 
                 main2DState.dirtyFlags[idx] = 1;
                 main2DState.scheduleRedraw();
 
-                const endBar = store.count - Math.round(clamped);
-                const startBar = endBar - VISIBLE_CANDLES;
-                if (startBar < 150 && store.hasMore && !store.isLoadingOlder) {
-                    store.isLoadingOlder = true;
+                // Ping-Pong Window Slice check:
+                const globalEnd = Math.max(VISIBLE_CANDLES, store.totalAvailable - Math.round(clamped));
+                const globalStart = globalEnd - VISIBLE_CANDLES;
+                const localStart = globalStart - (store.sliceStart || 0);
+                const localEnd = globalEnd - (store.sliceStart || 0);
+
+                const needsOlder = localStart < 120 && store.sliceStart > 0;
+                const needsNewer = localEnd > store.count - 120 && store.sliceEnd < store.totalAvailable;
+
+                if ((needsOlder || needsNewer) && !store.isFetchingSlice && store.spareOhlcv) {
+                    store.isFetchingSlice = true;
+                    const spareO = store.spareOhlcv;
+                    const spareS = store.spareSma;
+                    const spareR = store.spareRsi;
+                    store.spareOhlcv = null;
+                    store.spareSma = null;
+                    store.spareRsi = null;
+
                     main2DState.dataPort.postMessage({
-                        type: 'FETCH_OLDER_BARS',
+                        type: 'GET_WINDOW_SLICE',
                         chartIdx: idx,
-                        currentLoadedCount: store.count,
-                        batchSize: 500
-                    });
+                        targetRightOffset: Math.round(clamped),
+                        windowSize: 1000,
+                        recycledOhlcv: spareO.buffer,
+                        recycledSma: spareS.buffer,
+                        recycledRsi: spareR.buffer
+                    }, [spareO.buffer, spareS.buffer, spareR.buffer]);
                 }
 
                 handleRenderTelemetry({
@@ -511,7 +532,7 @@ function handleMain2DInput(data) {
                     type: 'DRAG_STATUS',
                     chartIdx: idx,
                     offset: Math.round(main2DState.rightOffsets[idx]),
-                    maxOffset: store ? store.count - VISIBLE_CANDLES : 500,
+                    maxOffset: store ? store.totalAvailable - VISIBLE_CANDLES : 500,
                     visibleCandles: VISIBLE_CANDLES,
                     totalCandles: store ? store.count : 1000,
                     totalAvailable: store ? store.totalAvailable : 90000,
@@ -519,33 +540,43 @@ function handleMain2DInput(data) {
                 });
             }
         }
-    } else if (data.type === 'RELEASE_MEMORY') {
+    } else if (data.type === 'RESET_TO_LIVE' || data.type === 'RELEASE_MEMORY') {
         const idx = data.chartIdx;
         const store = main2DState.chartStores[idx];
-        if (!store || store.count <= 1000) return;
-        const retainCount = 1000;
-        const dropCount = store.count - retainCount;
-
-        store.ohlcv = store.ohlcv.slice(dropCount * FLOATS_PER_CANDLE);
-        store.sma = store.sma.slice(dropCount);
-        store.rsi = store.rsi.slice(dropCount);
-        store.count = retainCount;
-        store.hasMore = true;
-        store.isLoadingOlder = false;
+        if (!store) return;
         main2DState.rightOffsets[idx] = 0;
         main2DState.dirtyFlags[idx] = 1;
+
+        if (store.sliceEnd < store.totalAvailable && !store.isFetchingSlice && store.spareOhlcv) {
+            store.isFetchingSlice = true;
+            const spareO = store.spareOhlcv;
+            const spareS = store.spareSma;
+            const spareR = store.spareRsi;
+            store.spareOhlcv = null;
+            store.spareSma = null;
+            store.spareRsi = null;
+
+            main2DState.dataPort.postMessage({
+                type: 'GET_WINDOW_SLICE',
+                chartIdx: idx,
+                targetRightOffset: 0,
+                windowSize: 1000,
+                recycledOhlcv: spareO.buffer,
+                recycledSma: spareS.buffer,
+                recycledRsi: spareR.buffer
+            }, [spareO.buffer, spareS.buffer, spareR.buffer]);
+        }
         main2DState.scheduleRedraw();
 
         handleRenderTelemetry({
             type: 'DRAG_STATUS',
             chartIdx: idx,
             offset: 0,
-            maxOffset: retainCount - VISIBLE_CANDLES,
+            maxOffset: store.totalAvailable - VISIBLE_CANDLES,
             visibleCandles: VISIBLE_CANDLES,
-            totalCandles: retainCount,
+            totalCandles: store.count,
             totalAvailable: store.totalAvailable,
-            isDragging: false,
-            memoryReleased: true
+            isDragging: false
         });
     }
 }
@@ -572,9 +603,15 @@ function renderSingleChartMain2D(ctx, chartIndex, store, cellWidth, cellHeight, 
     ctx.lineWidth = 1;
     ctx.strokeRect(0, 0, cellWidth, cellHeight);
 
-    const offset = Math.round(rightOffset);
-    const endBar = Math.max(visibleCount, totalCandles - offset);
-    const startBar = endBar - visibleCount;
+    const totalAvail = store.totalAvailable || totalCandles;
+    const offset = Math.round(Number.isFinite(rightOffset) ? rightOffset : 0);
+    const globalEnd = Math.max(VISIBLE_CANDLES, totalAvail - offset);
+    const globalStart = globalEnd - VISIBLE_CANDLES;
+
+    let localStart = globalStart - (store.sliceStart || 0);
+    localStart = Math.max(0, Math.min(totalCandles - VISIBLE_CANDLES, localStart));
+    const startBar = Math.floor(Number.isFinite(localStart) ? localStart : 0);
+    const endBar = startBar + VISIBLE_CANDLES;
 
     let minPrice = Infinity;
     let maxPrice = -Infinity;
@@ -688,14 +725,15 @@ function renderSingleChartMain2D(ctx, chartIndex, store, cellWidth, cellHeight, 
     if (rsiStarted) ctx.stroke();
 }
 
-// Global memory release trigger helper
-window.releaseMemory = (idx) => {
+// Snap to Live Edge / Reset trigger helper (replaces legacy memory release)
+window.resetToLive = (idx) => {
     if (currentMode === 'main-2d') {
-        handleMain2DInput({ type: 'RELEASE_MEMORY', chartIdx: idx });
+        handleMain2DInput({ type: 'RESET_TO_LIVE', chartIdx: idx });
     } else if (renderWorker) {
-        renderWorker.postMessage({ type: 'RELEASE_MEMORY', chartIdx: idx });
+        renderWorker.postMessage({ type: 'RESET_TO_LIVE', chartIdx: idx });
     }
 };
+window.releaseMemory = window.resetToLive;
 
 // Main Thread FPS Heartbeat Loop
 let lastTime = performance.now();
@@ -760,27 +798,28 @@ function hookGlobalPointerEvents(canvas, worker) {
         const col = Math.floor(e.clientX / cellWidth);
         const row = Math.floor(e.clientY / cellHeight);
         const chartIdx = row * GRID_SIZE + col;
-        worker.postMessage({ type: 'RELEASE_MEMORY', chartIdx: chartIdx });
+        worker.postMessage({ type: 'RESET_TO_LIVE', chartIdx: chartIdx });
     });
 }
 
 function hookCellPointerEvents(canvas, chartIndex, postFn) {
     canvas.addEventListener('pointerdown', (e) => {
-        canvas.setPointerCapture(e.pointerId);
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
         canvas.style.cursor = 'grabbing';
-        postFn({ type: 'POINTER', action: 'down', x: e.offsetX, y: e.offsetY, pointerId: e.pointerId, chartIdx: chartIndex });
+        postFn({ type: 'POINTER', action: 'down', x: e.clientX, y: e.clientY, pointerId: e.pointerId, chartIdx: chartIndex });
     });
     canvas.addEventListener('pointermove', (e) => {
-        postFn({ type: 'POINTER', action: 'move', x: e.offsetX, y: e.offsetY, pointerId: e.pointerId, chartIdx: chartIndex });
+        postFn({ type: 'POINTER', action: 'move', x: e.clientX, y: e.clientY, pointerId: e.pointerId, chartIdx: chartIndex });
     });
     const end = (e) => {
         canvas.style.cursor = 'grab';
+        try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
         postFn({ type: 'POINTER', action: 'up', pointerId: e.pointerId, chartIdx: chartIndex });
     };
     canvas.addEventListener('pointerup', end);
     canvas.addEventListener('pointercancel', end);
 
     canvas.addEventListener('dblclick', () => {
-        postFn({ type: 'RELEASE_MEMORY', chartIdx: chartIndex });
+        postFn({ type: 'RESET_TO_LIVE', chartIdx: chartIndex });
     });
 }

@@ -68,7 +68,9 @@ export function dataWorkerEntry() {
             NUM_CHARTS = e.data.numCharts;
             
             renderPort.onmessage = (msg) => {
-                if (msg.data.type === 'FETCH_OLDER_BARS') {
+                if (msg.data.type === 'GET_WINDOW_SLICE') {
+                    handleGetWindowSlice(msg.data);
+                } else if (msg.data.type === 'FETCH_OLDER_BARS') {
                     handleFetchOlderBars(msg.data);
                 }
             };
@@ -98,7 +100,7 @@ export function dataWorkerEntry() {
         // Initial master store copy
         ohlcvSnapshot.set(aggregatedDataStore);
 
-        // Initial 500-bar indicator calculations
+        // Initial 1000-bar indicator calculations
         for (let i = 0; i < NUM_CHARTS; i++) {
             const sma = calculateSMA(aggregatedDataStore, i, CANDLES_PER_CHART, 20);
             const rsi = calculateRSI(aggregatedDataStore, i, CANDLES_PER_CHART, 14);
@@ -223,11 +225,6 @@ export function dataWorkerEntry() {
         const symbolRawBarCounts = new Uint32Array(SYMBOLS.length);
 
         // Randomly update raw data for a symbol every 100ms (1/10 second)
-        // Add a new bar every 10 second
-        // Update the latest bar (new bar/ existing bar)
-        // Update the aggregated data only for charts of updated symbol
-        // Extract the updated aggregated candle of all relevant charts of updated symbol (maintain deltas array with object list)
-        // Send the updated candle along with its indicator values (deltas array) to renderer
         setInterval(() => {
             const t0 = performance.now();
             
@@ -446,8 +443,8 @@ export function dataWorkerEntry() {
                 const prevAvgLoss = losses / period;
                 const avgGain = (prevAvgGain * (period - 1) + gain) / period;
                 const avgLoss = (prevAvgLoss * (period - 1) + loss) / period;
-                gains = avgGain * period;
-                losses = avgLoss * period;
+                gains = avgGain;
+                losses = avgLoss;
                 const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
                 rsi[i] = 100 - (100 / (1 + rs));
             }
@@ -455,37 +452,38 @@ export function dataWorkerEntry() {
         return rsi;
     }
 
-    // Background Historical Paging Engine (Paging beyond 1,000 bars on demand)
-    function handleFetchOlderBars({ chartIdx, currentLoadedCount, batchSize = 500 }) {
+    // =========================================================================
+    // PING-PONG SLICE ENGINE (Zero-Allocation Transferable ArrayBuffer Reuse)
+    // Takes recycled ArrayBuffers from the renderer, populates the requested
+    // historical window slice, and transfers them back with ZERO memory growth!
+    // =========================================================================
+    function handleGetWindowSlice({ chartIdx, targetRightOffset, windowSize = 1000, recycledOhlcv, recycledSma, recycledRsi }) {
         const cfg = CHART_CONFIGS[chartIdx];
         if (!cfg) return;
 
         const ratio = cfg.ratio;
         const rawBuffer = rawSymbolStores[cfg.symbolIdx];
-        const maxAggregatedBars = Math.floor(RAW_BARS_PER_SYMBOL / ratio);
+        const maxAvailable = Math.floor(RAW_BARS_PER_SYMBOL / ratio);
 
-        if (currentLoadedCount >= maxAggregatedBars) {
-            renderPort.postMessage({
-                type: 'OLDER_BARS_RESPONSE',
-                chartIdx,
-                count: 0,
-                hasMore: false,
-                totalAvailable: maxAggregatedBars
-            });
-            return;
+        // Center the 500 visible candles inside the 1,000-bar window
+        const margin = Math.floor((windowSize - 500) / 2); // 250 bars margin on each side
+        const targetOffset = Math.max(0, Math.min(maxAvailable - 500, targetRightOffset));
+
+        let sliceEnd = Math.min(maxAvailable, maxAvailable - targetOffset + margin);
+        let sliceStart = Math.max(0, sliceEnd - windowSize);
+        if (sliceEnd - sliceStart < windowSize && sliceEnd < maxAvailable) {
+            sliceEnd = Math.min(maxAvailable, sliceStart + windowSize);
         }
+        const actualCount = sliceEnd - sliceStart;
 
-        const fetchCount = Math.min(batchSize, maxAggregatedBars - currentLoadedCount);
-        const hasMore = (currentLoadedCount + fetchCount < maxAggregatedBars);
+        // Reuse the transferred recycled ArrayBuffers directly!
+        const ohlcvChunk = recycledOhlcv ? new Float32Array(recycledOhlcv) : new Float32Array(windowSize * FLOATS_PER_CANDLE);
+        const smaChunk = recycledSma ? new Float32Array(recycledSma) : new Float32Array(windowSize);
+        const rsiChunk = recycledRsi ? new Float32Array(recycledRsi) : new Float32Array(windowSize);
 
-        // Calculate window of older raw bars to aggregate
-        const rawEnd = RAW_BARS_PER_SYMBOL - (currentLoadedCount * ratio);
-        const rawStart = rawEnd - (fetchCount * ratio);
-
-        const ohlcvChunk = new Float32Array(fetchCount * FLOATS_PER_CANDLE);
-
-        for (let k = 0; k < fetchCount; k++) {
-            const barRawStart = rawStart + (k * ratio);
+        // Populate ohlcvChunk directly by rolling raw 1m bars
+        for (let k = 0; k < actualCount; k++) {
+            const barRawStart = (sliceStart + k) * ratio;
             const barRawEnd = barRawStart + ratio;
 
             let high = -Infinity;
@@ -508,39 +506,42 @@ export function dataWorkerEntry() {
                 trades += rawBuffer[barOffset + FIELD.TRADES];
             }
 
-            const targetOffset = k * FLOATS_PER_CANDLE;
-            ohlcvChunk[targetOffset + FIELD.TIME] = k;
-            ohlcvChunk[targetOffset + FIELD.OPEN] = open;
-            ohlcvChunk[targetOffset + FIELD.HIGH] = high;
-            ohlcvChunk[targetOffset + FIELD.LOW] = low;
-            ohlcvChunk[targetOffset + FIELD.CLOSE] = close;
-            ohlcvChunk[targetOffset + FIELD.VOLUME] = volume;
-            ohlcvChunk[targetOffset + FIELD.TURNOVER] = turnover;
-            ohlcvChunk[targetOffset + FIELD.TRADES] = trades;
-            ohlcvChunk[targetOffset + FIELD.VWAP] = turnover / (volume || 1);
-            ohlcvChunk[targetOffset + FIELD.BID] = close - 0.05;
-            ohlcvChunk[targetOffset + FIELD.ASK] = close + 0.05;
-            ohlcvChunk[targetOffset + FIELD.BID_VOL] = 1000;
-            ohlcvChunk[targetOffset + FIELD.ASK_VOL] = 1200;
+            const targetOffsetIdx = k * FLOATS_PER_CANDLE;
+            ohlcvChunk[targetOffsetIdx + FIELD.TIME] = sliceStart + k;
+            ohlcvChunk[targetOffsetIdx + FIELD.OPEN] = open;
+            ohlcvChunk[targetOffsetIdx + FIELD.HIGH] = high;
+            ohlcvChunk[targetOffsetIdx + FIELD.LOW] = low;
+            ohlcvChunk[targetOffsetIdx + FIELD.CLOSE] = close;
+            ohlcvChunk[targetOffsetIdx + FIELD.VOLUME] = volume;
+            ohlcvChunk[targetOffsetIdx + FIELD.TURNOVER] = turnover;
+            ohlcvChunk[targetOffsetIdx + FIELD.TRADES] = trades;
+            ohlcvChunk[targetOffsetIdx + FIELD.VWAP] = turnover / (volume || 1);
+            ohlcvChunk[targetOffsetIdx + FIELD.BID] = close - 0.05;
+            ohlcvChunk[targetOffsetIdx + FIELD.ASK] = close + 0.05;
+            ohlcvChunk[targetOffsetIdx + FIELD.BID_VOL] = 1000;
+            ohlcvChunk[targetOffsetIdx + FIELD.ASK_VOL] = 1200;
         }
 
-        const smaChunk = calculateChunkSMA(ohlcvChunk, fetchCount, 20);
-        const rsiChunk = calculateChunkRSI(ohlcvChunk, fetchCount, 14);
+        // Calculate indicators directly into the recycled buffers
+        calculateChunkSMAInto(ohlcvChunk, smaChunk, actualCount, 20);
+        calculateChunkRSIInto(ohlcvChunk, rsiChunk, actualCount, 14);
 
+        // Transfer recycled buffers BACK to the renderer (Zero-Copy Ping-Pong!)
         renderPort.postMessage({
-            type: 'OLDER_BARS_RESPONSE',
+            type: 'WINDOW_SLICE_RESPONSE',
             chartIdx,
-            count: fetchCount,
+            sliceStart,
+            sliceEnd,
+            count: actualCount,
+            totalAvailable: maxAvailable,
             ohlcv: ohlcvChunk,
             sma: smaChunk,
-            rsi: rsiChunk,
-            hasMore,
-            totalAvailable: maxAggregatedBars
+            rsi: rsiChunk
         }, [ohlcvChunk.buffer, smaChunk.buffer, rsiChunk.buffer]);
     }
 
-    function calculateChunkSMA(store, count, period = 20) {
-        const sma = new Float32Array(count);
+    // In-place SMA calculation into existing buffer
+    function calculateChunkSMAInto(store, outSma, count, period = 20) {
         let sum = 0;
         for (let i = 0; i < count; i++) {
             const close = store[i * FLOATS_PER_CANDLE + FIELD.CLOSE];
@@ -548,23 +549,22 @@ export function dataWorkerEntry() {
             if (i >= period) {
                 const oldestClose = store[(i - period) * FLOATS_PER_CANDLE + FIELD.CLOSE];
                 sum -= oldestClose;
-                sma[i] = sum / period;
+                outSma[i] = sum / period;
             } else if (i === period - 1) {
-                sma[i] = sum / period;
+                outSma[i] = sum / period;
             } else {
-                sma[i] = close;
+                outSma[i] = close;
             }
         }
-        return sma;
     }
 
-    function calculateChunkRSI(store, count, period = 14) {
-        const rsi = new Float32Array(count);
+    // In-place RSI calculation into existing buffer
+    function calculateChunkRSIInto(store, outRsi, count, period = 14) {
         let gains = 0;
         let losses = 0;
         for (let i = 0; i < count; i++) {
             if (i === 0) {
-                rsi[i] = 50;
+                outRsi[i] = 50;
                 continue;
             }
             const prevClose = store[(i - 1) * FLOATS_PER_CANDLE + FIELD.CLOSE];
@@ -577,9 +577,9 @@ export function dataWorkerEntry() {
                 losses += loss;
                 if (i === period) {
                     const rs = losses === 0 ? 100 : gains / losses;
-                    rsi[i] = 100 - (100 / (1 + rs));
+                    outRsi[i] = 100 - (100 / (1 + rs));
                 } else {
-                    rsi[i] = 50;
+                    outRsi[i] = 50;
                 }
             } else {
                 const prevAvgGain = gains / period;
@@ -589,10 +589,18 @@ export function dataWorkerEntry() {
                 gains = avgGain;
                 losses = avgLoss;
                 const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-                rsi[i] = 100 - (100 / (1 + rs));
+                outRsi[i] = 100 - (100 / (1 + rs));
             }
         }
-        return rsi;
+    }
+
+    // Fallback: Legacy paging handler
+    function handleFetchOlderBars({ chartIdx, currentLoadedCount, batchSize = 500 }) {
+        handleGetWindowSlice({
+            chartIdx,
+            targetRightOffset: currentLoadedCount,
+            windowSize: 1000
+        });
     }
 }
 

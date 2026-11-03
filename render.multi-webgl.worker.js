@@ -114,6 +114,8 @@ onmessage = (e) => {
                 const { ohlcv, sma, rsi, candlesPerChart, floatsPerCandle } = msg.data;
                 const baseCount = candlesPerChart || 1000;
                 chartStores = [];
+                const RATIOS = [1, 1, 1, 1, 5, 5, 5, 5, 15, 15, 15, 15, 60, 60, 60, 60];
+
                 for (let i = 0; i < NUM_CHARTS; i++) {
                     const ohlcvSlice = new Float32Array(baseCount * FLOATS_PER_CANDLE);
                     ohlcvSlice.set(ohlcv.subarray(i * baseCount * FLOATS_PER_CANDLE, (i + 1) * baseCount * FLOATS_PER_CANDLE));
@@ -124,14 +126,25 @@ onmessage = (e) => {
                     const rsiSlice = new Float32Array(baseCount);
                     rsiSlice.set(rsi.subarray(i * baseCount, (i + 1) * baseCount));
 
+                    const spareOhlcv = new Float32Array(baseCount * FLOATS_PER_CANDLE);
+                    const spareSma = new Float32Array(baseCount);
+                    const spareRsi = new Float32Array(baseCount);
+
+                    const ratio = RATIOS[i] || 1;
+                    const totalAvail = Math.floor(90000 / ratio);
+
                     chartStores[i] = {
                         ohlcv: ohlcvSlice,
                         sma: smaSlice,
                         rsi: rsiSlice,
+                        spareOhlcv,
+                        spareSma,
+                        spareRsi,
+                        sliceStart: totalAvail - baseCount,
+                        sliceEnd: totalAvail,
                         count: baseCount,
-                        isLoadingOlder: false,
-                        hasMore: true,
-                        totalAvailable: 90000
+                        totalAvailable: totalAvail,
+                        isFetchingSlice: false
                     };
                 }
                 dirtyFlags.fill(1);
@@ -143,67 +156,58 @@ onmessage = (e) => {
                     const delta = deltas[d];
                     const store = chartStores[delta.chartIdx];
                     if (!store) continue;
-                    const count = store.count;
 
                     if (delta.isNewBar) {
-                        store.ohlcv.copyWithin(0, FLOATS_PER_CANDLE, count * FLOATS_PER_CANDLE);
-                        store.sma.copyWithin(0, 1, count);
-                        store.rsi.copyWithin(0, 1, count);
+                        store.totalAvailable++;
+                        if (store.sliceEnd >= store.totalAvailable - 1) {
+                            store.ohlcv.copyWithin(0, FLOATS_PER_CANDLE, store.count * FLOATS_PER_CANDLE);
+                            store.sma.copyWithin(0, 1, store.count);
+                            store.rsi.copyWithin(0, 1, store.count);
+                            store.sliceStart++;
+                            store.sliceEnd++;
+                        }
                     }
 
-                    const baseOffset = (count - 1) * FLOATS_PER_CANDLE;
-                    store.ohlcv.set(delta.candle, baseOffset);
-                    store.sma[count - 1] = delta.sma;
-                    store.rsi[count - 1] = delta.rsi;
-
-                    dirtyFlags[delta.chartIdx] = 1;
+                    if (store.sliceEnd >= store.totalAvailable) {
+                        const baseOffset = (store.count - 1) * FLOATS_PER_CANDLE;
+                        store.ohlcv.set(delta.candle, baseOffset);
+                        store.sma[store.count - 1] = delta.sma;
+                        store.rsi[store.count - 1] = delta.rsi;
+                        dirtyFlags[delta.chartIdx] = 1;
+                    }
                 }
                 scheduleRedraw();
-            } else if (msg.data.type === 'OLDER_BARS_RESPONSE') {
-                const { chartIdx, count, ohlcv: olderOhlcv, sma: olderSma, rsi: olderRsi, hasMore, totalAvailable } = msg.data;
+            } else if (msg.data.type === 'WINDOW_SLICE_RESPONSE') {
+                const { chartIdx, sliceStart, sliceEnd, count, totalAvailable, ohlcv: newOhlcv, sma: newSma, rsi: newRsi } = msg.data;
                 const store = chartStores[chartIdx];
                 if (!store) return;
 
-                store.isLoadingOlder = false;
-                store.hasMore = hasMore;
+                store.spareOhlcv = store.ohlcv;
+                store.spareSma = store.sma;
+                store.spareRsi = store.rsi;
+
+                store.ohlcv = newOhlcv;
+                store.sma = newSma;
+                store.rsi = newRsi;
+                store.sliceStart = sliceStart;
+                store.sliceEnd = sliceEnd;
+                store.count = count;
                 store.totalAvailable = totalAvailable;
+                store.isFetchingSlice = false;
 
-                if (count > 0) {
-                    const oldCount = store.count;
-                    const newCount = oldCount + count;
+                dirtyFlags[chartIdx] = 1;
+                scheduleRedraw();
 
-                    const newOhlcv = new Float32Array(newCount * FLOATS_PER_CANDLE);
-                    const newSma = new Float32Array(newCount);
-                    const newRsi = new Float32Array(newCount);
-
-                    newOhlcv.set(olderOhlcv, 0);
-                    newSma.set(olderSma, 0);
-                    newRsi.set(olderRsi, 0);
-
-                    newOhlcv.set(store.ohlcv, count * FLOATS_PER_CANDLE);
-                    newSma.set(store.sma, count);
-                    newRsi.set(store.rsi, count);
-
-                    store.ohlcv = newOhlcv;
-                    store.sma = newSma;
-                    store.rsi = newRsi;
-                    store.count = newCount;
-
-                    dirtyFlags[chartIdx] = 1;
-                    scheduleRedraw();
-
-                    postMessage({
-                        type: 'DRAG_STATUS',
-                        chartIdx: chartIdx,
-                        offset: Math.round(rightOffsets[chartIdx]),
-                        maxOffset: newCount - VISIBLE_CANDLES,
-                        visibleCandles: VISIBLE_CANDLES,
-                        totalCandles: newCount,
-                        totalAvailable: totalAvailable,
-                        isDragging: (activeDrag && activeDrag.chartIdx === chartIdx),
-                        justPaged: true
-                    });
-                }
+                postMessage({
+                    type: 'DRAG_STATUS',
+                    chartIdx: chartIdx,
+                    offset: Math.round(rightOffsets[chartIdx]),
+                    maxOffset: totalAvailable - VISIBLE_CANDLES,
+                    visibleCandles: VISIBLE_CANDLES,
+                    totalCandles: count,
+                    totalAvailable: totalAvailable,
+                    isDragging: (activeDrag && activeDrag.chartIdx === chartIdx)
+                });
             }
         };
 
@@ -243,25 +247,40 @@ onmessage = (e) => {
                 const deltaX = x - activeDrag.startX;
                 const slotWidth = cellWidth / VISIBLE_CANDLES;
                 const newOffset = activeDrag.startOffset + (deltaX / slotWidth);
-                const maxOffset = store.count - VISIBLE_CANDLES;
-                const clamped = Math.max(0, Math.min(maxOffset, newOffset));
+                const maxOffset = (store.totalAvailable || 1000) - VISIBLE_CANDLES;
+                const clamped = Math.max(0, Math.min(maxOffset, Number.isFinite(newOffset) ? newOffset : 0));
                 rightOffsets[idx] = clamped;
 
                 dirtyFlags[idx] = 1;
                 scheduleRedraw();
 
-                // Threshold trigger (< 80 bars remaining)
-                const endBar = store.count - Math.round(clamped);
-                const startBar = endBar - VISIBLE_CANDLES;
+                // Ping-Pong Window Slice check:
+                const globalEnd = Math.max(VISIBLE_CANDLES, store.totalAvailable - Math.round(clamped));
+                const globalStart = globalEnd - VISIBLE_CANDLES;
+                const localStart = globalStart - (store.sliceStart || 0);
+                const localEnd = globalEnd - (store.sliceStart || 0);
 
-                if (startBar < 150 && !store.isLoadingOlder && store.hasMore && dataPort) {
-                    store.isLoadingOlder = true;
+                const needsOlder = localStart < 120 && store.sliceStart > 0;
+                const needsNewer = localEnd > store.count - 120 && store.sliceEnd < store.totalAvailable;
+
+                if ((needsOlder || needsNewer) && !store.isFetchingSlice && store.spareOhlcv && dataPort) {
+                    store.isFetchingSlice = true;
+                    const spareO = store.spareOhlcv;
+                    const spareS = store.spareSma;
+                    const spareR = store.spareRsi;
+                    store.spareOhlcv = null;
+                    store.spareSma = null;
+                    store.spareRsi = null;
+
                     dataPort.postMessage({
-                        type: 'FETCH_OLDER_BARS',
+                        type: 'GET_WINDOW_SLICE',
                         chartIdx: idx,
-                        currentLoadedCount: store.count,
-                        batchSize: 500
-                    });
+                        targetRightOffset: Math.round(clamped),
+                        windowSize: 1000,
+                        recycledOhlcv: spareO.buffer,
+                        recycledSma: spareS.buffer,
+                        recycledRsi: spareR.buffer
+                    }, [spareO.buffer, spareS.buffer, spareR.buffer]);
                 }
 
                 postMessage({
@@ -280,7 +299,7 @@ onmessage = (e) => {
                 const idx = activeDrag.chartIdx;
                 const store = chartStores[idx];
                 const clamped = rightOffsets[idx];
-                const maxOffset = store ? store.count - VISIBLE_CANDLES : 0;
+                const maxOffset = store ? store.totalAvailable - VISIBLE_CANDLES : 0;
                 activeDrag = null;
                 postMessage({
                     type: 'DRAG_STATUS',
@@ -302,46 +321,46 @@ onmessage = (e) => {
         });
         dirtyFlags.fill(1);
         scheduleRedraw();
-    } else if (e.data.type === 'RELEASE_MEMORY') {
-        const chartIdx = e.data.chartIdx;
-        if (chartIdx !== undefined && chartStores[chartIdx]) {
-            releaseChartMemory(chartIdx);
-        } else {
-            for (let i = 0; i < NUM_CHARTS; i++) {
-                releaseChartMemory(i);
-            }
+    } else if (e.data.type === 'RESET_TO_LIVE' || e.data.type === 'RELEASE_MEMORY') {
+        const idx = e.data.chartIdx;
+        const store = chartStores[idx];
+        if (!store) return;
+        rightOffsets[idx] = 0;
+        dirtyFlags[idx] = 1;
+
+        if (store.sliceEnd < store.totalAvailable && !store.isFetchingSlice && store.spareOhlcv && dataPort) {
+            store.isFetchingSlice = true;
+            const spareO = store.spareOhlcv;
+            const spareS = store.spareSma;
+            const spareR = store.spareRsi;
+            store.spareOhlcv = null;
+            store.spareSma = null;
+            store.spareRsi = null;
+
+            dataPort.postMessage({
+                type: 'GET_WINDOW_SLICE',
+                chartIdx: idx,
+                targetRightOffset: 0,
+                windowSize: 1000,
+                recycledOhlcv: spareO.buffer,
+                recycledSma: spareS.buffer,
+                recycledRsi: spareR.buffer
+            }, [spareO.buffer, spareS.buffer, spareR.buffer]);
         }
+        scheduleRedraw();
+
+        postMessage({
+            type: 'DRAG_STATUS',
+            chartIdx: idx,
+            offset: 0,
+            maxOffset: store.totalAvailable - VISIBLE_CANDLES,
+            visibleCandles: VISIBLE_CANDLES,
+            totalCandles: store.count,
+            totalAvailable: store.totalAvailable,
+            isDragging: false
+        });
     }
 };
-
-function releaseChartMemory(idx) {
-    const store = chartStores[idx];
-    if (!store || store.count <= 1000) return;
-    const retainCount = 1000;
-    const dropCount = store.count - retainCount;
-
-    store.ohlcv = store.ohlcv.slice(dropCount * FLOATS_PER_CANDLE);
-    store.sma = store.sma.slice(dropCount);
-    store.rsi = store.rsi.slice(dropCount);
-    store.count = retainCount;
-    store.hasMore = true;
-    store.isLoadingOlder = false;
-    rightOffsets[idx] = 0;
-    dirtyFlags[idx] = 1;
-    scheduleRedraw();
-
-    postMessage({
-        type: 'DRAG_STATUS',
-        chartIdx: idx,
-        offset: 0,
-        maxOffset: retainCount - VISIBLE_CANDLES,
-        visibleCandles: VISIBLE_CANDLES,
-        totalCandles: retainCount,
-        totalAvailable: store.totalAvailable,
-        isDragging: false,
-        memoryReleased: true
-    });
-}
 
 function renderSinglePixiChart(g, chartIndex, store) {
     if (!g) return;
@@ -365,9 +384,15 @@ function renderSinglePixiChart(g, chartIndex, store) {
     g.lineStyle(1, 0x2a2e39);
     g.drawRect(0, 0, cellWidth, cellHeight);
 
-    const offset = Math.round(rightOffsets[chartIndex]);
-    const endBar = Math.max(visibleCount, totalCandles - offset);
-    const startBar = endBar - visibleCount;
+    const totalAvail = store.totalAvailable || totalCandles;
+    const offset = Math.round(Number.isFinite(rightOffsets[chartIndex]) ? rightOffsets[chartIndex] : 0);
+    const globalEnd = Math.max(visibleCount, totalAvail - offset);
+    const globalStart = globalEnd - visibleCount;
+
+    let localStart = globalStart - (store.sliceStart || 0);
+    localStart = Math.max(0, Math.min(totalCandles - visibleCount, localStart));
+    const startBar = Math.floor(Number.isFinite(localStart) ? localStart : 0);
+    const endBar = startBar + visibleCount;
 
     // PASS 1: Min/Max
     let minPrice = Infinity;

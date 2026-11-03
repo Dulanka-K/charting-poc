@@ -10,7 +10,7 @@ A high-performance financial charting Proof of Concept (PoC) rendering **16 simu
 - **OffscreenCanvas Render Workers:** Direct worker-to-worker data pipeline via `MessageChannel`, transmitting compact binary deltas (`120 bytes` per tick).
 - **On-Demand VSync Scheduler:** Event-driven `requestAnimationFrame` rendering with selective dirty-flag invalidation (`0%` background CPU when idle; `60 FPS` during interaction).
 - **Canvas 2D Path Batching:** Groups bullish and bearish candlesticks into 2 batched GPU draw passes (`~1ms` total render time).
-- **Lookahead Historical Pagination:** Dynamically streams 500-bar historical chunks from a 30,000-bar worker store while panning, with on-demand memory release.
+- **Ping-Pong Transferable Buffer Architecture:** Recycles fixed-capacity `Float32Array` windows (1,000 bars per chart: 500 visible + 500 lookahead margin) using zero-copy `ArrayBuffer` transferables. When panning, idle spare buffers are transferred back and forth between the renderer and `data.worker.js` with in-place indicator calculation, completely capping renderer RAM at 1,000 bars per chart with zero memory growth and zero GC pressure during continuous scrolling.
 
 ## Rendering Modes Included
 
